@@ -1,14 +1,19 @@
 {
-    "name": "example_ws",
+    "name": "chat-websocket-pro",
     "version": "1.0.0",
-    "description": "",
-    "main": "index.js",
+    "description": "Chat en tiempo real con WebSockets, HTML5, CSS3 y JavaScript Vanilla.",
+    "main": "server.js",
     "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1"
+        "start": "node server.js"
     },
-    "keywords": [],
-    "author": "",
-    "license": "ISC",
+    "keywords": [
+        "websocket",
+        "chat",
+        "nodejs",
+        "vanilla-js"
+    ],
+    "author": "Equipo Chat WebSocket",
+    "license": "MIT",
     "type": "commonjs",
     "dependencies": {
         "ws": "^8.20.1"
