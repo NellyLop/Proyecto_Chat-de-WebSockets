@@ -3,30 +3,202 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebSocket Básico</title>
-
+    <meta name="description" content="Chat en tiempo real con WebSockets, navegación por foro global, privados y comunidades.">
+    <title>Chat WebSocket Pro</title>
     <link rel="stylesheet" href="style.css">
 </head>
-<body>
-    <div class="login">
-        <h2>Iniciar Sesión</h2>
-        <input type="text" id="username" placeholder="Nombre de usuario">
-        <button id="btnLogin">Entrar al Chat</button>
+<body data-theme="dark">
+    <div class="login-modal" id="loginModal" aria-labelledby="loginTitle" role="dialog" aria-modal="true">
+        <form class="login-card" id="loginForm" autocomplete="off">
+            <div class="login-icon" aria-hidden="true">💬</div>
+            <h1 id="loginTitle">Bienvenido al Chat</h1>
+            <p>Ingresa un nickname para conectarte al servidor WebSocket.</p>
+
+            <label for="nicknameInput">Tu nickname</label>
+            <input
+                type="text"
+                id="nicknameInput"
+                name="nickname"
+                maxlength="20"
+                placeholder="Ej. Heriberto"
+                required
+            >
+            <small id="loginError" class="form-error" aria-live="polite"></small>
+
+            <button type="submit" class="primary-button">Entrar al chat</button>
+        </form>
     </div>
 
-    <div class="contenedor" visible="false">
+    <div class="app-shell" id="chatApp">
+        <nav class="server-rail" aria-label="Navegación por secciones">
+            <button class="rail-item rail-item-active" id="navGlobal" type="button" data-section="global" aria-label="Foro Global" title="Foro Global">
+                <span class="rail-icon" aria-hidden="true">🌐</span>
+                <span class="rail-label">Foro Global</span>
+            </button>
+            <button class="rail-item" id="navPrivate" type="button" data-section="private" aria-label="Privados" title="Privados">
+                <span class="rail-icon" aria-hidden="true">✉️</span>
+                <span class="rail-label">Privados</span>
+            </button>
+            <button class="rail-item" id="navCommunities" type="button" data-section="communities" aria-label="Comunidades" title="Comunidades">
+                <span class="rail-icon" aria-hidden="true">👥</span>
+                <span class="rail-label">Comunidades</span>
+            </button>
+            <span class="rail-divider" aria-hidden="true"></span>
+            <span class="rail-spacer" aria-hidden="true"></span>
+            <button class="rail-item" id="themeToggle" type="button" aria-label="Cambiar tema" title="Cambiar tema">
+                <span class="rail-icon" aria-hidden="true">☀️</span>
+                <span class="rail-label">Tema</span>
+            </button>
+        </nav>
 
-        <h1>Chat WebSocket</h1>
+        <aside class="conversation-sidebar" id="userSidebar" aria-label="Lista de chats">
+            <header class="sidebar-search">
+                <h1>ChatSocket</h1>
+                <div class="search-actions">
+                    <label class="search-box" for="userSearchInput">
+                        <span aria-hidden="true">🔎</span>
+                        <input id="userSearchInput" type="search" placeholder="Buscar usuarios o grupos" autocomplete="off">
+                    </label>
+                    <button class="icon-button" id="listMenuButton" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Opciones de lista">⋮</button>
+                    <div class="dropdown-menu hidden" id="listMenu" role="menu">
+                        <button type="button" id="openGroupModalButton" role="menuitem">Crear grupo o comunidad</button>
+                    </div>
+                </div>
+            </header>
 
-        <div id="mensajes"></div>
+            <section class="chat-list-section" aria-label="Contenido de la sección activa">
+                <ul class="chat-list" id="chatList"></ul>
+            </section>
 
-        <div class="formulario">
-            <input type="text" id="texto" placeholder="Escribe un mensaje">
-            <button id="btnEnviar">Enviar</button>
+            <footer class="sidebar-profile" aria-label="Perfil actual">
+                <div class="profile-mini-avatar" id="selfAvatar" aria-hidden="true">Tú</div>
+                <div class="profile-mini-text">
+                    <strong id="selfNickname">Sin conectar</strong>
+                    <p id="connectionStatus" class="connection-status disconnected">Desconectado</p>
+                </div>
+            </footer>
+        </aside>
+
+        <main class="chat-panel" aria-label="Área principal de mensajes">
+            <header class="chat-header">
+                <button class="icon-button sidebar-toggle" id="sidebarToggle" type="button" aria-label="Mostrar lista de chats">☰</button>
+                <div class="chat-heading">
+                    <div class="chat-avatar" id="chatAvatar" aria-hidden="true">#</div>
+                    <div>
+                        <h2 id="chatTitle">Selecciona una conversación</h2>
+                        <p id="chatSubtitle"></p>
+                    </div>
+                </div>
+                <div class="chat-controls" aria-label="Controles de conversación">
+                    <button class="icon-button" id="conversationSearchButton" type="button" aria-label="Buscar en conversación">🔍</button>
+                    <button class="icon-button" id="chatMenuButton" type="button" aria-haspopup="true" aria-expanded="false" aria-label="Opciones de conversación">⋮</button>
+                    <div class="dropdown-menu chat-menu hidden" id="chatMenu" role="menu">
+                        <button type="button" id="deleteConversationButton" role="menuitem">Eliminar conversación</button>
+                    </div>
+                </div>
+            </header>
+
+            <div class="conversation-search hidden" id="conversationSearchBar">
+                <label class="search-box" for="conversationSearchInput">
+                    <span aria-hidden="true">🔍</span>
+                    <input id="conversationSearchInput" type="search" placeholder="Buscar dentro de esta conversación" autocomplete="off">
+                </label>
+                <button class="icon-button" id="closeConversationSearch" type="button" aria-label="Cerrar búsqueda">✕</button>
+            </div>
+
+            <section class="messages-panel" id="messages" aria-live="polite" aria-label="Mensajes del chat"></section>
+
+            <p class="typing-indicator" id="typingIndicator" aria-live="polite"></p>
+
+            <form class="message-form" id="messageForm" autocomplete="off">
+                <button class="icon-button" id="emojiButton" type="button" aria-label="Abrir emojis">😊</button>
+                <div class="emoji-picker hidden" id="emojiPicker" aria-label="Selector de emojis"></div>
+                <label class="sr-only" for="messageInput">Escribe un mensaje</label>
+                <input
+                    type="text"
+                    id="messageInput"
+                    name="message"
+                    maxlength="300"
+                    placeholder="Escribir mensaje"
+                    disabled
+                >
+                <button class="send-icon-button" id="sendButton" type="submit" disabled aria-label="Enviar mensaje">➤</button>
+            </form>
+        </main>
+
+        <aside class="profile-panel" aria-label="Información del chat o usuario seleccionado">
+            <article class="profile-card">
+                <div class="profile-banner" aria-hidden="true"></div>
+                <div class="profile-avatar-large" id="profileAvatar" aria-hidden="true">#</div>
+                <h2 id="profileName">Sin conversación</h2>
+                <p class="profile-status" id="profileStatus">Selecciona un chat</p>
+                <p class="profile-description" id="profileDescription"></p>
+
+                <section class="common-channels" id="profileExtra" aria-label="Información adicional"></section>
+            </article>
+        </aside>
+    </div>
+
+    <div class="modal-backdrop hidden" id="groupModal" role="dialog" aria-modal="true" aria-labelledby="groupModalTitle">
+        <form class="group-card" id="groupForm" autocomplete="off">
+            <header class="modal-header">
+                <div>
+                    <h2 id="groupModalTitle">Crear grupo o comunidad</h2>
+                    <p>Selecciona participantes activos. Tú se agregas automáticamente.</p>
+                </div>
+                <button class="icon-button" id="closeGroupModalButton" type="button" aria-label="Cerrar modal">✕</button>
+            </header>
+
+            <label for="groupNameInput">Nombre del grupo</label>
+            <input id="groupNameInput" name="groupName" type="text" maxlength="40" placeholder="Ej. Proyecto WebSocket" required>
+
+            <div class="participants-box" id="participantsList" aria-label="Participantes activos"></div>
+            <small class="form-error" id="groupError" aria-live="polite"></small>
+
+            <footer class="modal-actions">
+                <button class="secondary-button" id="cancelGroupButton" type="button">Cancelar</button>
+                <button class="primary-button" type="submit">Crear grupo</button>
+            </footer>
+        </form>
+    </div>
+
+    <div class="modal-backdrop hidden" id="addMembersModal" role="dialog" aria-modal="true" aria-labelledby="addMembersModalTitle">
+        <div class="group-card" autocomplete="off">
+            <header class="modal-header">
+                <div>
+                    <h2 id="addMembersModalTitle">Agregar miembros</h2>
+                    <p>Selecciona usuarios activos para agregar al grupo.</p>
+                </div>
+                <button class="icon-button" id="closeAddMembersButton" type="button" aria-label="Cerrar modal">✕</button>
+            </header>
+
+            <div class="participants-box" id="addMembersList" aria-label="Usuarios activos"></div>
+            <small class="form-error" id="addMembersError" aria-live="polite"></small>
+
+            <footer class="modal-actions">
+                <button class="secondary-button" id="cancelAddMembersButton" type="button">Cancelar</button>
+                <button class="primary-button" id="confirmAddMembersButton" type="button">Agregar</button>
+            </footer>
         </div>
-
     </div>
 
-    <script src="modules/app.js"></script>
+    <div class="modal-backdrop hidden" id="inviteLinkModal" role="dialog" aria-modal="true" aria-labelledby="inviteLinkTitle">
+        <div class="group-card">
+            <header class="modal-header">
+                <div>
+                    <h2 id="inviteLinkTitle">Enlace de invitación</h2>
+                    <p>Comparte este enlace para que otros se unan al grupo.</p>
+                </div>
+                <button class="icon-button" id="closeInviteLinkButton" type="button" aria-label="Cerrar">✕</button>
+            </header>
+            <div class="invite-link-box">
+                <input type="text" id="inviteLinkInput" readonly aria-label="Enlace de invitación">
+                <button class="primary-button" id="copyInviteLinkButton" type="button">Copiar</button>
+            </div>
+            <small id="inviteLinkCopied" style="color: var(--color-success); display:none;">¡Enlace copiado!</small>
+        </div>
+    </div>
+
+    <script type="module" src="app.js"></script>
 </body>
 </html>
