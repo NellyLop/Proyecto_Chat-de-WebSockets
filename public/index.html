@@ -8,8 +8,13 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <div class="login">
+        <h2>Iniciar Sesión</h2>
+        <input type="text" id="username" placeholder="Nombre de usuario">
+        <button id="btnLogin">Entrar al Chat</button>
+    </div>
 
-    <div class="contenedor">
+    <div class="contenedor" visible="false">
 
         <h1>Chat WebSocket</h1>
 
@@ -22,6 +27,6 @@
 
     </div>
 
-    <script src="app.js"></script>
+    <script src="modules/app.js"></script>
 </body>
 </html>
