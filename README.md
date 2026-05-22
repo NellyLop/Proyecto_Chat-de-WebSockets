@@ -25,7 +25,7 @@ Desarrollar una aplicación de chat en tiempo real utilizando WebSockets para pe
 ## Estructura del proyecto
 
 ```text
-Proyecto_Chat-de-WebSockets/
+chat-de-WebSockets/
 ├── server.js
 ├── package.json
 ├── .gitignore
