@@ -1,4 +1,3 @@
-import { initNotify, playNotify } from '../sounds/notify.js';
 const socket = new WebSocket("ws://localhost:3000");
 
 const mensajes = document.getElementById("mensajes");
@@ -18,12 +17,10 @@ socket.onmessage = (event) => {
     div.textContent = event.data;
 
     mensajes.appendChild(div);
-    playNotify();
 
 };
 
 btnEnviar.addEventListener("click", () => {
-    initNotify(); 
     const mensaje = texto.value;
 
     if (mensaje.trim() !== "") {
