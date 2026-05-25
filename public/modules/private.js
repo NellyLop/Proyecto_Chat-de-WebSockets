@@ -11,7 +11,6 @@ export function setPrivateMode({ user, titleElement, subtitleElement, exitButton
     subtitleElement.textContent = 'El mensaje será enviado únicamente a este usuario.';
     exitButton.classList.remove('hidden');
 }
-
 /**
  * Restaura visualmente el modo global.
  * @param {object} options Opciones de UI.
@@ -24,7 +23,6 @@ export function clearPrivateMode({ titleElement, subtitleElement, exitButton }) 
     subtitleElement.textContent = 'Mensajes públicos para todos los usuarios conectados.';
     exitButton.classList.add('hidden');
 }
-
 /**
  * Envía un mensaje privado usando el protocolo JSON definido para WebSocket.
  * @param {object} options Configuración del envío privado.
@@ -48,7 +46,6 @@ export function sendPrivate({ socketSender, targetUser, text, timestamp }) {
         timestamp
     });
 }
-
 /**
  * Renderiza un mensaje privado recibido desde el servidor.
  * @param {object} payload Información del mensaje privado.
