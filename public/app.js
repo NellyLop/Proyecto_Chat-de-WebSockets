@@ -1617,5 +1617,4 @@ function initApp() {
         connectWebSocket({ type: 'resume', payload: { sessionToken: storedSession.sessionToken } });
     }
 }
-
 initApp();
