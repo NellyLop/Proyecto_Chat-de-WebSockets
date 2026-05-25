@@ -1,6 +1,7 @@
 import { sendPrivate } from './modules/private.js';
 import { setupTypingEvents, handleTypingStatus, clearTypingIndicator } from './modules/typing.js';
 import { initEmojiPicker } from './emoji/picker.js';
+import { initNotify, playNotify } from './sounds/notify.js';  
 import { validateLogin, validateRegister } from './modules/login.js';
 import { getStoredSession, saveSession, clearSession, hasValidStoredSession } from './modules/session.js';
 
@@ -398,9 +399,12 @@ function handleServerMessage(rawMessage) {
             if (state.activeChat?.type === 'global') {
                 renderMessage({ ...payload, timestamp, kind: 'global' });
             }
+            if (payload.fromId !== state.selfId) playNotify();
+
             break;
         case 'private_msg':
             receivePrivateMessage(payload, timestamp);
+            playNotify();
             break;
         case 'group_msg':
             receiveGroupMessage(payload, timestamp);
@@ -1086,6 +1090,7 @@ function handleLoginSubmit(event) {
     elements.authSubmitButton.disabled = true;
     elements.authSubmitButton.textContent = state.authMode === 'register' ? 'Creando cuenta...' : 'Entrando...';
     state.shouldReconnect = true;
+    initNotify(); 
     connectWebSocket({ type: state.authMode === 'register' ? 'register' : 'login', payload: validation.data });
 }
 
