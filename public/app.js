@@ -1,7 +1,7 @@
 import { sendPrivate } from './modules/private.js';
 import { setupTypingEvents, handleTypingStatus, clearTypingIndicator } from './modules/typing.js';
 import { initEmojiPicker } from './emoji/picker.js';
-
+import { initNotify, playNotify } from './sounds/notify.js';  
 const RECONNECT_BASE_DELAY = 1000;
 const RECONNECT_MAX_DELAY = 5000;
 const MAX_NICKNAME_LENGTH = 20;
