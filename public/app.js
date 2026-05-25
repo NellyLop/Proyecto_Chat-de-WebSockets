@@ -1,7 +1,9 @@
 import { sendPrivate } from './modules/private.js';
 import { setupTypingEvents, handleTypingStatus, clearTypingIndicator } from './modules/typing.js';
 import { initEmojiPicker } from './emoji/picker.js';
-import { initNotify, playNotify } from './sounds/notify.js';  
+import { validateLogin, validateRegister } from './modules/login.js';
+import { getStoredSession, saveSession, clearSession, hasValidStoredSession } from './modules/session.js';
+
 const RECONNECT_BASE_DELAY = 1000;
 const RECONNECT_MAX_DELAY = 5000;
 const MAX_NICKNAME_LENGTH = 20;
@@ -28,7 +30,13 @@ const SECTION_CONFIG = {
 
 const state = {
     socket: null,
+    sessionToken: '',
+    authMode: 'login',
+    pendingAuth: null,
+    firstName: '',
+    lastName: '',
     nickname: '',
+    userCode: '',
     selfId: null,
     users: [],
     groups: [],
@@ -43,8 +51,16 @@ const state = {
 const elements = {
     loginModal: document.getElementById('loginModal'),
     loginForm: document.getElementById('loginForm'),
+    firstNameInput: document.getElementById('firstNameInput'),
+    lastNameInput: document.getElementById('lastNameInput'),
     nicknameInput: document.getElementById('nicknameInput'),
+    passwordInput: document.getElementById('passwordInput'),
     loginError: document.getElementById('loginError'),
+    loginModeButton: document.getElementById('loginModeButton'),
+    registerModeButton: document.getElementById('registerModeButton'),
+    registerFields: document.getElementById('registerFields'),
+    authSubmitButton: document.getElementById('authSubmitButton'),
+    authHelperText: document.getElementById('authHelperText'),
     connectionStatus: document.getElementById('connectionStatus'),
     chatTitle: document.getElementById('chatTitle'),
     chatSubtitle: document.getElementById('chatSubtitle'),
@@ -61,7 +77,9 @@ const elements = {
     emojiButton: document.getElementById('emojiButton'),
     emojiPicker: document.getElementById('emojiPicker'),
     selfNickname: document.getElementById('selfNickname'),
+    selfCode: document.getElementById('selfCode'),
     selfAvatar: document.getElementById('selfAvatar'),
+    logoutButton: document.getElementById('logoutButton'),
     profileAvatar: document.getElementById('profileAvatar'),
     profileName: document.getElementById('profileName'),
     profileStatus: document.getElementById('profileStatus'),
@@ -117,6 +135,37 @@ function getInitials(value) {
 }
 
 /**
+ * Devuelve el nombre completo de un usuario público.
+ * @param {{firstName?:string,lastName?:string,nickname?:string}} user Usuario.
+ * @returns {string} Nombre completo o nickname.
+ */
+function getFullName(user) {
+    const fullName = `${user?.firstName || ''} ${user?.lastName || ''}`.trim();
+    return fullName || user?.nickname || 'Usuario';
+}
+
+/**
+ * Devuelve el nombre completo del usuario autenticado.
+ * @returns {string} Nombre completo actual.
+ */
+function getFullNameFromState() {
+    return getFullName({ firstName: state.firstName, lastName: state.lastName, nickname: state.nickname });
+}
+
+/**
+ * Copia datos públicos de usuario autenticado al estado del cliente.
+ * @param {object} user Usuario público enviado por el servidor.
+ */
+function setAuthenticatedUser(user) {
+    state.selfId = user.id;
+    state.userCode = user.code || '';
+    state.firstName = user.firstName || '';
+    state.lastName = user.lastName || '';
+    state.nickname = user.nickname || '';
+    updateSelfIdentity();
+}
+
+/**
  * Genera un identificador estable basado en nickname para historial local de privados.
  * @param {string} nickname Nombre de usuario.
  * @returns {string} Llave normalizada.
@@ -130,7 +179,7 @@ function getPrivateKey(nickname) {
  * @returns {string} Llave de almacenamiento.
  */
 function getStorageKey() {
-    return `chat-socket:${state.nickname || 'anonymous'}:frontend-v3`;
+    return `chat-socket:${state.selfId || state.nickname || 'anonymous'}:frontend-v4`;
 }
 
 /**
@@ -239,26 +288,29 @@ function canSendToActiveChat() {
  */
 function updateSelfIdentity() {
     elements.selfNickname.textContent = state.nickname || 'Sin conectar';
+    elements.selfCode.textContent = state.userCode ? `${state.userCode} · ${getFullNameFromState()}` : 'Sin código';
     elements.selfAvatar.textContent = state.nickname ? getInitials(state.nickname) : 'Tú';
 }
 
 /**
  * Abre la conexión WebSocket después de validar el nickname.
  */
-function connectWebSocket() {
+function connectWebSocket(authRequest = null) {
     updateConnectionStatus('connecting');
+    state.pendingAuth = authRequest || state.pendingAuth;
     state.socket = new WebSocket(getWebSocketUrl());
 
     state.socket.addEventListener('open', () => {
         state.reconnectAttempts = 0;
-        state.shouldReconnect = true;
         updateConnectionStatus('connected');
-        elements.loginModal.classList.add('hidden');
-        sendJson({
-            type: 'join',
-            payload: { nickname: state.nickname },
-            timestamp: new Date().toISOString()
-        });
+
+        if (state.pendingAuth) {
+            sendJson({
+                type: state.pendingAuth.type,
+                payload: state.pendingAuth.payload,
+                timestamp: new Date().toISOString()
+            });
+        }
     });
 
     state.socket.addEventListener('message', (event) => {
@@ -267,7 +319,7 @@ function connectWebSocket() {
 
     state.socket.addEventListener('close', () => {
         updateConnectionStatus('disconnected');
-        if (state.shouldReconnect) {
+        if (state.shouldReconnect && state.sessionToken) {
             scheduleReconnect();
         }
     });
@@ -285,8 +337,8 @@ function scheduleReconnect() {
     const delay = Math.min(RECONNECT_BASE_DELAY * state.reconnectAttempts, RECONNECT_MAX_DELAY);
 
     window.setTimeout(() => {
-        if (state.nickname && (!state.socket || state.socket.readyState === WebSocket.CLOSED)) {
-            connectWebSocket();
+        if (state.sessionToken && (!state.socket || state.socket.readyState === WebSocket.CLOSED)) {
+            connectWebSocket({ type: 'resume', payload: { sessionToken: state.sessionToken } });
         }
     }, delay);
 }
@@ -310,12 +362,15 @@ function handleServerMessage(rawMessage) {
         case 'invite_link':
             showInviteLink(payload);
             break;
-        case 'join_success':
-            state.selfId = payload.id;
-            updateSelfIdentity();
-            renderChatList();
-            updateComposerState();
-            checkInviteToken();
+        case 'auth_success':
+            handleAuthSuccess(payload);
+            break;
+        case 'auth_error':
+            handleAuthError(payload.text || 'No fue posible autenticar la cuenta.');
+            break;
+        case 'logout_success':
+            clearSession();
+            window.location.reload();
             break;
         case 'history':
             state.globalMessages = payload.messages || [];
@@ -327,6 +382,9 @@ function handleServerMessage(rawMessage) {
             state.users = payload.users || [];
             renderChatList();
             updateComposerState();
+            break;
+        case 'private_conversations':
+            hydratePrivateConversations(payload.conversations || []);
             break;
         case 'group_list':
             state.groups = payload.groups || [];
@@ -440,14 +498,14 @@ function renderChatList() {
  * Renderiza usuarios conectados en la sección Foro Global.
  */
 function renderGlobalUserList() {
-    const users = filterList(state.users, (user) => user.nickname);
+    const users = filterList(state.users, (user) => `${user.nickname} ${getFullName(user)} ${user.code || ''}`);
 
     users.forEach((user) => {
         const isSelf = user.id === state.selfId;
         const item = createListItem({
             avatar: getInitials(user.nickname),
             title: `${user.nickname}${isSelf ? ' (Tú)' : ''}`,
-            subtitle: isSelf ? 'Tu sesión activa' : 'En línea · clic para privado',
+            subtitle: isSelf ? `${user.code} · Tu cuenta activa` : `${getFullName(user)} · ${user.code || 'En línea'}`,
             active: state.activeChat?.type === 'private' && state.activeChat?.name === user.nickname,
             disabled: isSelf,
             onClick: () => selectPrivateByUser(user)
@@ -462,7 +520,7 @@ function renderGlobalUserList() {
 function renderPrivateConversationList() {
     const conversations = Object.values(state.privateConversations)
         .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
-    const filtered = filterList(conversations, (conversation) => conversation.nickname);
+    const filtered = filterList(conversations, (conversation) => `${conversation.nickname} ${getFullName(conversation.user || {})} ${conversation.user?.code || ''}`);
 
     filtered.forEach((conversation) => {
         const lastMessage = conversation.messages?.at(-1)?.text || '';
@@ -470,7 +528,7 @@ function renderPrivateConversationList() {
         const item = createListItem({
             avatar: getInitials(conversation.nickname),
             title: conversation.nickname,
-            subtitle: lastMessage || (activeUser ? 'En línea' : 'Sin mensajes recientes'),
+            subtitle: lastMessage || (activeUser ? `${getFullName(activeUser)} · En línea` : `${conversation.user?.code || ''} Sin mensajes recientes`),
             active: state.activeChat?.type === 'private' && state.activeChat?.name === conversation.nickname,
             onClick: () => selectPrivateConversation(conversation.nickname)
         });
@@ -611,7 +669,9 @@ function getActiveUserByNickname(nickname) {
 function ensurePrivateConversation(nickname) {
     const key = getPrivateKey(nickname);
     if (!state.privateConversations[key]) {
+        const activeUser = getActiveUserByNickname(nickname);
         state.privateConversations[key] = {
+            user: activeUser || { nickname },
             nickname,
             messages: [],
             updatedAt: new Date().toISOString()
@@ -630,10 +690,10 @@ function renderActiveChatShell() {
         elements.chatAvatar.textContent = config.avatar;
         elements.chatTitle.textContent = state.activeSection === 'global' ? 'Selecciona Foro Global' : 'Selecciona una conversación';
         elements.chatSubtitle.textContent = '';
-        elements.profileAvatar.textContent = config.avatar;
-        elements.profileName.textContent = 'Sin conversación';
-        elements.profileStatus.textContent = 'Selecciona un chat';
-        elements.profileDescription.textContent = '';
+        elements.profileAvatar.textContent = state.nickname ? getInitials(state.nickname) : config.avatar;
+        elements.profileName.textContent = state.nickname ? state.nickname : 'Sin conversación';
+        elements.profileStatus.textContent = state.userCode ? `Código: ${state.userCode}` : 'Selecciona un chat';
+        elements.profileDescription.textContent = state.selfId ? `${getFullNameFromState()} · Cuenta persistente disponible en otros dispositivos con nickname y contraseña.` : '';
         elements.profileExtra.innerHTML = '';
         return;
     }
@@ -652,13 +712,15 @@ function renderActiveChatShell() {
 
     if (state.activeChat.type === 'private') {
         const activeUser = getActiveUserByNickname(state.activeChat.name);
+        const conversation = state.privateConversations[getPrivateKey(state.activeChat.name)];
+        const profileUser = activeUser || conversation?.user || { nickname: state.activeChat.name };
         elements.chatAvatar.textContent = getInitials(state.activeChat.name);
         elements.chatTitle.textContent = state.activeChat.name;
         elements.chatSubtitle.textContent = activeUser ? 'Chat privado · usuario en línea' : 'Chat privado · usuario desconectado';
         elements.profileAvatar.textContent = getInitials(state.activeChat.name);
         elements.profileName.textContent = state.activeChat.name;
-        elements.profileStatus.textContent = activeUser ? '● En línea' : '○ Desconectado';
-        elements.profileDescription.textContent = 'Los mensajes privados solo se muestran para el emisor y el destinatario.';
+        elements.profileStatus.textContent = activeUser ? `● En línea · ${profileUser.code || ''}` : `○ Desconectado · ${profileUser.code || 'Sin código visible'}`;
+        elements.profileDescription.textContent = `${getFullName(profileUser)}. Los mensajes privados se guardan en el servidor para tu cuenta.`;
         elements.profileExtra.innerHTML = '';
         return;
     }
@@ -685,7 +747,7 @@ function renderProfileUsers() {
 
     state.users.forEach((user) => {
         const item = document.createElement('li');
-        item.textContent = `● ${user.nickname}${user.id === state.selfId ? ' (Tú)' : ''}`;
+        item.textContent = `● ${user.nickname}${user.id === state.selfId ? ' (Tú)' : ''} · ${user.code || ''}`;
         list.appendChild(item);
     });
 
@@ -704,7 +766,7 @@ function renderProfileGroupMembers(group) {
 
     (group?.members || []).forEach((member) => {
         const item = document.createElement('li');
-        item.textContent = `${member.nickname}${member.id === state.selfId ? ' (Tú)' : ''}`;
+        item.textContent = `${member.nickname}${member.id === state.selfId ? ' (Tú)' : ''} · ${member.code || ''}`;
         list.appendChild(item);
     });
 
@@ -859,14 +921,18 @@ function scrollToLastMessage() {
  * @param {string} timestamp Fecha del servidor.
  */
 function receivePrivateMessage(payload, timestamp) {
-    const conversation = ensurePrivateConversation(payload.from);
+    const isOwn = payload.fromId === state.selfId;
+    const contactNickname = isOwn ? payload.to : payload.from;
+    const conversation = ensurePrivateConversation(contactNickname);
     const message = {
         from: payload.from,
         fromId: payload.fromId,
+        to: payload.to,
+        toId: payload.toId,
         text: payload.text,
         timestamp,
         kind: 'private',
-        direction: 'in'
+        direction: isOwn ? 'out' : 'in'
     };
 
     conversation.messages.push(message);
@@ -874,7 +940,7 @@ function receivePrivateMessage(payload, timestamp) {
     saveLocalState();
     renderChatList();
 
-    if (state.activeChat?.type === 'private' && state.activeChat.name === payload.from) {
+    if (state.activeChat?.type === 'private' && state.activeChat.name === contactNickname) {
         renderMessage(message);
     }
 }
@@ -1001,18 +1067,119 @@ function handleMessageSubmit(event) {
 function handleLoginSubmit(event) {
     event.preventDefault();
 
-    const nickname = sanitizeInput(elements.nicknameInput.value, MAX_NICKNAME_LENGTH);
-    if (!nickname) {
-        elements.loginError.textContent = 'El nickname no puede estar vacío.';
+    const rawValues = {
+        firstName: elements.firstNameInput.value,
+        lastName: elements.lastNameInput.value,
+        nickname: elements.nicknameInput.value,
+        password: elements.passwordInput.value
+    };
+    const validation = state.authMode === 'register'
+        ? validateRegister(rawValues)
+        : validateLogin(rawValues);
+
+    if (!validation.valid) {
+        elements.loginError.textContent = validation.error;
         return;
     }
 
     elements.loginError.textContent = '';
-    state.nickname = nickname;
+    elements.authSubmitButton.disabled = true;
+    elements.authSubmitButton.textContent = state.authMode === 'register' ? 'Creando cuenta...' : 'Entrando...';
+    state.shouldReconnect = true;
+    connectWebSocket({ type: state.authMode === 'register' ? 'register' : 'login', payload: validation.data });
+}
+
+/**
+ * Cambia entre el modo iniciar sesión y crear cuenta.
+ * @param {'login'|'register'} mode Modo visual del formulario.
+ */
+function setAuthMode(mode) {
+    state.authMode = mode;
+    const isRegister = mode === 'register';
+    elements.registerFields.hidden = !isRegister;
+    elements.loginModeButton.classList.toggle('auth-tab-active', !isRegister);
+    elements.registerModeButton.classList.toggle('auth-tab-active', isRegister);
+    elements.loginModeButton.setAttribute('aria-selected', String(!isRegister));
+    elements.registerModeButton.setAttribute('aria-selected', String(isRegister));
+    elements.passwordInput.autocomplete = isRegister ? 'new-password' : 'current-password';
+    elements.authSubmitButton.textContent = isRegister ? 'Crear cuenta' : 'Entrar al chat';
+    elements.authHelperText.textContent = isRegister
+        ? 'Se creará una cuenta persistente en el servidor para entrar desde otros dispositivos.'
+        : 'Tu sesión se guardará en este navegador. En otro dispositivo entra con tu nickname y contraseña.';
+    elements.loginError.textContent = '';
+}
+
+/**
+ * Procesa autenticación exitosa del servidor.
+ * @param {{sessionToken:string,user:object}} payload Datos autenticados.
+ */
+function handleAuthSuccess(payload) {
+    state.sessionToken = payload.sessionToken;
+    state.pendingAuth = { type: 'resume', payload: { sessionToken: payload.sessionToken } };
+    state.shouldReconnect = true;
+    setAuthenticatedUser(payload.user);
+    saveSession({ sessionToken: payload.sessionToken, user: payload.user });
     loadLocalState();
-    updateSelfIdentity();
+    elements.loginModal.classList.add('hidden');
+    elements.authSubmitButton.disabled = false;
+    setAuthMode(state.authMode);
     renderChatList();
-    connectWebSocket();
+    renderActiveChatShell();
+    updateComposerState();
+    checkInviteToken();
+}
+
+/**
+ * Muestra error de autenticación y limpia sesión inválida.
+ * @param {string} message Mensaje de error.
+ */
+function handleAuthError(message) {
+    state.shouldReconnect = false;
+    state.sessionToken = '';
+    state.pendingAuth = null;
+    clearSession();
+    elements.loginModal.classList.remove('hidden');
+    elements.authSubmitButton.disabled = false;
+    setAuthMode(state.authMode);
+    elements.loginError.textContent = message;
+    if (state.socket?.readyState === WebSocket.OPEN) {
+        state.socket.close();
+    }
+}
+
+/**
+ * Carga conversaciones privadas persistentes recibidas desde el servidor.
+ * @param {Array<object>} conversations Conversaciones del usuario.
+ */
+function hydratePrivateConversations(conversations) {
+    state.privateConversations = {};
+    conversations.forEach((conversation) => {
+        const user = conversation.user || {};
+        const key = getPrivateKey(user.nickname);
+        state.privateConversations[key] = {
+            user,
+            nickname: user.nickname,
+            messages: conversation.messages || [],
+            updatedAt: conversation.updatedAt || new Date().toISOString()
+        };
+    });
+    saveLocalState();
+    renderChatList();
+}
+
+/**
+ * Cierra sesión del usuario en este navegador.
+ */
+function handleLogout() {
+    const confirmed = window.confirm('¿Cerrar sesión en este navegador?');
+    if (!confirmed) {
+        return;
+    }
+
+    sendJson({ type: 'logout', payload: { sessionToken: state.sessionToken }, timestamp: new Date().toISOString() });
+    clearSession();
+    state.shouldReconnect = false;
+    window.setTimeout(() => window.location.reload(), 200);
 }
 
 /**
@@ -1088,7 +1255,7 @@ function renderParticipantsList() {
         avatar.textContent = getInitials(user.nickname);
 
         const name = document.createElement('span');
-        name.textContent = user.nickname;
+        name.textContent = `${user.nickname} · ${getFullName(user)}`;
 
         label.append(checkbox, avatar, name);
         elements.participantsList.appendChild(label);
@@ -1310,7 +1477,7 @@ function openAddMembersModal(group) {
             avatar.className = 'chat-list-avatar';
             avatar.textContent = getInitials(user.nickname);
             const name = document.createElement('span');
-            name.textContent = user.nickname;
+            name.textContent = `${user.nickname} · ${getFullName(user)}`;
             label.append(checkbox, avatar, name);
             list.appendChild(label);
         });
@@ -1405,6 +1572,9 @@ function initApp() {
     });
 
     elements.loginForm.addEventListener('submit', handleLoginSubmit);
+    elements.loginModeButton.addEventListener('click', () => setAuthMode('login'));
+    elements.registerModeButton.addEventListener('click', () => setAuthMode('register'));
+    elements.logoutButton.addEventListener('click', handleLogout);
     elements.messageForm.addEventListener('submit', handleMessageSubmit);
     elements.listMenuButton.addEventListener('click', toggleListMenu);
     elements.chatMenuButton.addEventListener('click', toggleChatMenu);
@@ -1436,5 +1606,16 @@ function initApp() {
             setTimeout(() => { copied.style.display = 'none'; }, 2000);
         });
     });
+
+    setAuthMode('login');
+    const storedSession = getStoredSession();
+    if (hasValidStoredSession(storedSession)) {
+        state.sessionToken = storedSession.sessionToken;
+        setAuthenticatedUser(storedSession.user);
+        elements.loginModal.classList.add('hidden');
+        state.shouldReconnect = true;
+        connectWebSocket({ type: 'resume', payload: { sessionToken: storedSession.sessionToken } });
+    }
 }
+
 initApp();
