@@ -1606,7 +1606,6 @@ function initApp() {
             setTimeout(() => { copied.style.display = 'none'; }, 2000);
         });
     });
-
     setAuthMode('login');
     const storedSession = getStoredSession();
     if (hasValidStoredSession(storedSession)) {
