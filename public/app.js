@@ -580,6 +580,7 @@ function renderGlobalUserList() {
             subtitle: isSelf ? `${user.code} · Tu cuenta activa` : `${getFullName(user)} · ${user.code || 'En línea'}`,
             active: state.activeChat?.type === 'private' && state.activeChat?.name === user.nickname,
             disabled: isSelf,
+            isSelf: isSelf, // Se añade este parámetro.
             onClick: () => selectPrivateByUser(user)
         });
         elements.chatList.appendChild(item);
@@ -635,10 +636,17 @@ function renderCommunityList() {
 function createListItem({ avatar, title, subtitle, active = false, disabled = false, onClick }) {
     const listItem = document.createElement('li');
     const button = document.createElement('button');
-    button.type = 'button';
-    button.className = ['chat-list-item', active ? 'chat-list-item-active' : ''].filter(Boolean).join(' ');
-    button.disabled = Boolean(disabled);
+    const isSelf = Boolean(disabled);
 
+    button.type = 'button';
+
+    button.className = [
+        'chat-list-item', 
+        active ? 'chat-list-item-active' : '',
+        isSelf ? 'chat-list-item-self' : '' // 👈 Inyectamos la clase exclusiva
+    ].filter(Boolean).join(' ');
+
+    button.disabled = isSelf;
     const avatarElement = document.createElement('span');
     avatarElement.className = 'chat-list-avatar';
     avatarElement.textContent = avatar;

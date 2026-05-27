@@ -1239,3 +1239,14 @@ input:disabled {
         font-size: 0.88rem;
     }
 }
+
+/* ── Resaltado para tu propio usuario en la lista lateral ── */
+.chat-list-item-self {
+    border-left: 4px solid var(--color-primary) !important;
+    background: var(--bg-tertiary);
+    opacity: 0.85;
+}
+.chat-list-item-self .chat-list-text strong::after {
+    content: ' 👤'; /* Un indicador visual sutil al lado de tu nombre */
+    font-size: 0.85rem;
+}
