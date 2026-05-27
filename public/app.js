@@ -430,6 +430,74 @@ function handleServerMessage(rawMessage) {
 }
 
 /**
+ * cambio implementado, hasta guardar datos hidratados. Procesa, almacena en el estado e imprime un mensaje privado recibido.
+ * @param {object} payload Datos del mensaje (from, fromId, text, etc.).
+ * @param {string} timestamp Fecha ISO.
+ */
+function receivePrivateMessage(payload, timestamp) {
+    // 1. Determinar con quién es la conversación para saber en qué cajón guardarla
+    const isOwn = payload.fromId === state.selfId;
+    const conversationPartner = isOwn ? state.activeChat?.name : payload.from;
+
+    if (!conversationPartner) return;
+
+    // 2. Asegurar que la conversación exista en nuestro diccionario local del estado
+    const conversation = ensurePrivateConversation(conversationPartner);
+
+    // 3. Crear la estructura homogénea del mensaje
+    const newMessage = {
+        from: payload.from,
+        fromId: payload.fromId,
+        text: payload.text,
+        timestamp,
+        kind: 'private'
+    };
+
+    // 4. Empujar el mensaje al historial de esa conversación y actualizar la hora de edición
+    conversation.messages.push(newMessage);
+    conversation.updatedAt = timestamp || new Date().toISOString();
+
+    // 5. Guardar en el almacenamiento local para persistencia al recargar
+    saveLocalState();
+
+    // 6. Si el usuario tiene abierto JUSTO el chat de esa persona, lo pintamos en pantalla inmediatamente
+    if (state.activeChat?.type === 'private' && state.activeChat.name === conversationPartner) {
+        // Usamos la función importada de tu private.js para renderizarlo en el DOM
+        // Pasamos tu función interna 'renderMessage' como callback
+        import('./modules/private.js').then((module) => {
+            module.receivePrivate(payload, timestamp, renderMessage, state.selfId);
+        });
+    } else {
+        // Si tiene otra sección abierta, refrescamos la lista lateral para que se vea el "último mensaje" recibido
+        renderChatList();
+    }
+}
+
+/**
+ * Toma el arreglo de conversaciones previas enviado por el servidor al autenticarse
+ * y las inyecta directamente al estado del cliente.
+ * @param {Array<object>} serverConversations Lista de conversaciones del backend.
+ */
+function hydratePrivateConversations(serverConversations) {
+    if (!Array.isArray(serverConversations)) return;
+
+    serverConversations.forEach((conv) => {
+        const key = getPrivateKey(conv.nickname);
+        state.privateConversations[key] = {
+            user: conv.user || { nickname: conv.nickname },
+            nickname: conv.nickname,
+            messages: conv.messages || [],
+            updatedAt: conv.updatedAt || new Date().toISOString()
+        };
+    });
+
+    // Guardar los datos hidratados en el cliente y actualizar la lista de chats previos
+    saveLocalState();
+    renderChatList();
+}
+
+
+/**
  * Cambia la sección activa del panel izquierdo.
  * @param {'global'|'private'|'communities'} section Sección destino.
  * @param {boolean} openDefault Indica si debe abrir automáticamente el chat principal de la sección.
